@@ -28,17 +28,25 @@ impl TryFrom<Vec<Vec<f32>>> for Matrix {
 
     fn try_from(value: Vec<Vec<f32>>) -> Result<Self, Self::Error> {
         let rows = value.len();
+        if rows == 0 {
+            return Err("Matrix is empty".to_string());
+        }
         let cols = value[0].len();
+        if cols == 0 {
+            return Err("Matrix is empty".to_string());
+        }
 
-        let data = value
-            .into_iter()
-            .flatten()
-            .collect::<Vec<f32>>()
-            .into_boxed_slice();
-        if data.len() != rows * cols {
+        if !value.iter().all(|row| row.len() == cols) {
             return Err("Matrix dimensions do not match".to_string());
         }
-        Ok(Matrix { data, rows, cols })
+
+        let data: Vec<f32> = value.into_iter().flatten().collect();
+
+        Ok(Matrix {
+            data: data.into_boxed_slice(),
+            rows,
+            cols,
+        })
     }
 }
 
@@ -46,31 +54,34 @@ impl FromStr for Matrix {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut data = vec![];
-        for row_str in s.split("\n") {
-            if row_str.is_empty() {
-                continue;
-            }
-            let mut row = vec![];
-            for element in row_str.split(" ").map(|x| x.parse::<f32>()) {
-                match element {
-                    Ok(element) => row.push(element),
-                    Err(e) => Err(e.to_string())?,
-                }
-            }
-            data.push(row);
-        }
-        data.try_into()
+        s.lines()
+            .filter(|line| !line.trim().is_empty())
+            .enumerate()
+            .map(|(row, line)| {
+                line.split_whitespace()
+                    .enumerate()
+                    .map(|(col, tok)| {
+                        tok.parse::<f32>()
+                            .map_err(|e| format!("parse error at row {row} col {col}: {e}"))
+                    })
+                    .collect::<Result<Vec<f32>, _>>()
+            })
+            .collect::<Result<Vec<Vec<f32>>, _>>()?
+            .try_into()
     }
 }
 
 impl Display for Matrix {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for row in 0..self.rows {
-            for col in 0..self.cols {
-                write!(f, "{} ", self[(row, col)])?;
-            }
-            writeln!(f)?;
+            let start = row * self.cols;
+            let end = start + self.cols;
+            let line = self.data[start..end]
+                .iter()
+                .map(|&x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(f, "{line}")?;
         }
         Ok(())
     }
