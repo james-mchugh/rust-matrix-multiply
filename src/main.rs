@@ -3,6 +3,9 @@ use std::fs::read_to_string;
 use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
+
+
+#[derive(Debug, Clone, PartialEq, Default)]
 struct Matrix {
     data: Box<[f32]>,
     rows: usize,
@@ -50,6 +53,25 @@ impl TryFrom<Vec<Vec<f32>>> for Matrix {
     }
 }
 
+impl<const R: usize, const C: usize> TryFrom<[[f32; C]; R]> for Matrix {
+    type Error = String;
+
+    fn try_from(value: [[f32; C]; R]) -> Result<Self, Self::Error> {
+        if R == 0 || C == 0 {
+            return Err("Matrix is empty".to_string());
+        }
+
+        let data: Vec<f32> = value.into_iter().flatten().collect();
+
+        Ok(Matrix {
+            data: data.into_boxed_slice(),
+            rows: R,
+            cols: C,
+        })
+    }
+}
+
+
 impl FromStr for Matrix {
     type Err = String;
 
@@ -88,6 +110,24 @@ impl Display for Matrix {
 }
 
 impl Matrix {
+    /// Calculates the single-dimensional array offset for a given two-dimensional index (row, col).
+    ///
+    /// This function is used to map a 2D index into a 1D array offset, assuming that the array
+    /// elements are stored in row-major order. It multiplies the specified row index by the
+    /// number of columns (`self.cols`) and adds the column index to determine the offset.
+    ///
+    /// Row major order is used as it is the default choice for C and CUDA.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - The row index (0-based) of the element in the 2D representation.
+    /// * `col` - The column index (0-based) of the element in the 2D representation.
+    ///
+    /// # Returns
+    ///
+    /// The computed offset as a `usize` representing the position of the element in a
+    /// flat 1-dimensional array.
+    ///
     fn offset(&self, (row, col): (usize, usize)) -> usize {
         row * self.cols + col
     }
@@ -110,6 +150,42 @@ impl Matrix {
             }
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::Matrix;
+
+    #[test]
+    fn test_mul_cpu() {
+        #[rustfmt::skip]
+        let matrix_a = Matrix::try_from(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0]
+            ]
+        ).unwrap();
+
+        #[rustfmt::skip]
+        let matrix_b = Matrix::try_from(
+            [
+                [5.0, 6.0],
+                [7.0, 8.0]
+            ]
+        ).unwrap();
+
+        #[rustfmt::skip]
+        let expected = Matrix::try_from(
+            [
+                [19.0, 22.0],
+                [43.0, 50.0]
+            ]
+        ).unwrap();
+
+        let result = matrix_a.mul_cpu(&matrix_b).unwrap();
+
+        assert_eq!(result, expected)
     }
 }
 
