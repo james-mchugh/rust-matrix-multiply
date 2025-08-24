@@ -1,33 +1,60 @@
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Display;
-use std::ops::{AddAssign, Index, IndexMut, Mul};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Matrix<T> {
-    data: Box<[T]>,
+use crate::backends::Backend;
+
+#[derive(Debug)]
+pub struct Matrix<B: Backend> {
+    buf: B::Buf,
     rows: usize,
     cols: usize,
+    _b: std::marker::PhantomData<B>,
 }
 
-impl<T> Index<(usize, usize)> for Matrix<T> {
-    type Output = T;
+pub trait Dot {
+    type Err;
+    type Output;
+    fn dot(&self, other: &Self) -> Result<Self::Output, Self::Err>;
+}
 
-    fn index(&self, index: (usize, usize)) -> &Self::Output {
-        &self.data[self.offset(index)]
+impl<B: Backend> Matrix<B> {
+    pub fn new_zeros(rows: usize, cols: usize) -> Result<Self, B::Err> {
+        let buf = B::alloc(rows * cols)?;
+        Ok(Self {
+            buf,
+            rows,
+            cols,
+            _b: std::marker::PhantomData,
+        })
+    }
+
+    pub fn from_host(rows: usize, cols: usize, data: &[f32]) -> Result<Self, B::Err> {
+        assert_eq!(data.len(), rows * cols);
+        let buf = B::upload(data)?;
+        Ok(Self {
+            buf,
+            rows,
+            cols,
+            _b: std::marker::PhantomData,
+        })
+    }
+
+    pub fn to_host(&self) -> Result<Vec<f32>, B::Err> {
+        let mut out = vec![0.0f32; self.rows * self.cols];
+        B::download(&self.buf, &mut out)?;
+        Ok(out)
+    }
+
+    pub fn shape(&self) -> (usize, usize) {
+        (self.rows, self.cols)
     }
 }
 
-impl<T> IndexMut<(usize, usize)> for Matrix<T> {
-    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
-        &mut self.data[self.offset(index)]
-    }
-}
-
-impl<T> TryFrom<Vec<Vec<T>>> for Matrix<T> {
+impl<B: Backend> TryFrom<Vec<Vec<f32>>> for Matrix<B> {
     type Error = String;
 
-    fn try_from(value: Vec<Vec<T>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<Vec<f32>>) -> Result<Self, Self::Error> {
         let rows = value.len();
         if rows == 0 {
             return Err("Matrix is empty".to_string());
@@ -41,32 +68,23 @@ impl<T> TryFrom<Vec<Vec<T>>> for Matrix<T> {
             return Err("Matrix dimensions do not match".to_string());
         }
 
-        let data: Vec<T> = value.into_iter().flatten().collect();
+        let data: Vec<f32> = value.into_iter().flatten().collect();
 
-        Ok(Matrix {
-            data: data.into_boxed_slice(),
-            rows,
-            cols,
-        })
+        // todo fix error message
+        Matrix::from_host(rows, cols, &data).map_err(|_| "Matrix allocation failed".to_string())
     }
 }
 
-impl<T, const R: usize, const C: usize> From<[[T; C]; R]> for Matrix<T> {
-    fn from(value: [[T; C]; R]) -> Self {
-        let data: Vec<T> = value.into_iter().flatten().collect();
+impl<B: Backend, const R: usize, const C: usize> TryFrom<[[f32; C]; R]> for Matrix<B> {
+    type Error = B::Err;
 
-        Matrix {
-            data: data.into_boxed_slice(),
-            rows: R,
-            cols: C,
-        }
+    fn try_from(value: [[f32; C]; R]) -> Result<Self, Self::Error> {
+        let flat_data: Vec<f32> = value.iter().flatten().copied().collect();
+        Matrix::from_host(R, C, &flat_data)
     }
 }
 
-impl<T> FromStr for Matrix<T>
-where
-    T: FromStr,
-{
+impl<B: Backend> FromStr for Matrix<B> {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -77,25 +95,23 @@ where
                 line.split_whitespace()
                     .enumerate()
                     .map(|(col, tok)| {
-                        tok.parse::<T>()
+                        tok.parse::<f32>()
                             .map_err(|_| format!("parse error at row {row} col {col}"))
                     })
-                    .collect::<Result<Vec<T>, _>>()
+                    .collect::<Result<Vec<f32>, _>>()
             })
-            .collect::<Result<Vec<Vec<T>>, _>>()?
+            .collect::<Result<Vec<Vec<f32>>, _>>()?
             .try_into()
     }
 }
 
-impl<T> Display for Matrix<T>
-where
-    T: Display,
-{
+impl<B: Backend> Display for Matrix<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let data = self.to_host().map_err(|_| std::fmt::Error)?;
         for row in 0..self.rows {
             let start = row * self.cols;
             let end = start + self.cols;
-            let line = self.data[start..end]
+            let line = data[start..end]
                 .iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<_>>()
@@ -107,50 +123,52 @@ where
 }
 
 // General inherent methods that don't need "numeric" bounds
-impl<T> Matrix<T> {
-    /// Calculates the single-dimensional array offset for a given two-dimensional index (row, col).
-    fn offset(&self, (row, col): (usize, usize)) -> usize {
-        row * self.cols + col
-    }
-
-    pub fn new(rows: usize, cols: usize) -> Self
-    where
-        T: Default + Clone,
-    {
-        let data = vec![T::default(); rows * cols].into_boxed_slice();
-        Matrix { data, rows, cols }
+impl<B: Backend> Matrix<B> {
+    pub fn new(rows: usize, cols: usize) -> Result<Self, B::Err> {
+        Matrix::new_zeros(rows, cols)
     }
 }
 
 // Numeric operations grouped in a separate impl with focused bounds
-impl<T> Matrix<T>
-where
-    T: Default + Copy + AddAssign + Mul<Output = T>,
-{
-    pub fn mul_cpu(&self, other: &Self) -> Result<Self, String> {
+impl<B: Backend> Dot for Matrix<B> {
+    type Err = String;
+    type Output = Self;
+
+    fn dot(&self, other: &Self) -> Result<Self, Self::Err> {
         if self.cols != other.rows {
             return Err("Matrix dimensions do not match".to_string());
         }
-        let mut result = Matrix::new(self.rows, other.cols);
-        for row in 0..self.rows {
-            for col in 0..other.cols {
-                for i in 0..self.cols {
-                    result[(row, col)] += self[(row, i)] * other[(i, col)];
-                }
-            }
-        }
-        Ok(result)
+
+        // todo: fix error message
+        let mut c =
+            Self::new_zeros(self.cols, self.rows).map_err(|_| "Matrix allocation failed")?;
+
+        // todo: fix error message
+        B::gemm(
+            self.rows, self.cols, other.cols, &self.buf, &other.buf, &mut c.buf,
+        )
+        .map_err(|_| "Matrix multiplication failed")?;
+
+        Ok(c)
+    }
+}
+
+impl<B: Backend> PartialEq for Matrix<B> {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_host().unwrap() == other.to_host().unwrap()
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::backends::CPU;
+    use crate::matrix::Dot;
     use crate::Matrix;
 
     #[test]
     fn test_mul_cpu() {
         #[rustfmt::skip]
-        let matrix_a = Matrix::try_from(
+        let matrix_a = Matrix::<CPU>::try_from(
             [
                 [1.0, 2.0],
                 [3.0, 4.0]
@@ -173,7 +191,7 @@ mod test {
             ]
         ).unwrap();
 
-        let result = matrix_a.mul_cpu(&matrix_b).unwrap();
+        let result = matrix_a.dot(&matrix_b).unwrap();
 
         assert_eq!(result, expected)
     }

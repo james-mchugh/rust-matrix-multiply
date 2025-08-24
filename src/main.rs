@@ -1,4 +1,4 @@
-use rust_matrix_multiply::Matrix;
+use rust_matrix_multiply::{Matrix, Dot, CPU};
 use std::fs::read_to_string;
 
 fn main() -> Result<(), String> {
@@ -9,11 +9,11 @@ fn main() -> Result<(), String> {
 
     let matrix_a = read_to_string(path_a)
         .map_err(|e| e.to_string())?
-        .parse::<Matrix<f32>>()?;
+        .parse::<Matrix<CPU>>()?;
     let matrix_b = read_to_string(path_b)
         .map_err(|e| e.to_string())?
-        .parse::<Matrix<f32>>()?;
-    let result = matrix_a.mul_cpu(&matrix_b)?;
+        .parse::<Matrix<CPU>>()?;
+    let result = matrix_a.dot(&matrix_b)?;
 
     println!("{}", result);
 
