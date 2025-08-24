@@ -48,11 +48,8 @@ impl Backend for CPU {
             let row_a = &a[i * k..(i + 1) * k];
             let c_row_start = i * n;
             for j in 0..n {
-                let mut sum = 0.0;
                 let row_bt = &bt[j * k..(j + 1) * k];
-                for p in 0..k {
-                    sum += row_a[p] * row_bt[p];
-                }
+                let sum = row_a.iter().zip(row_bt).map(|(a, b)| a * b).sum();
                 c[c_row_start + j] = sum;
             }
         }

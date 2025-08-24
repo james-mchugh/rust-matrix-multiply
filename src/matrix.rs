@@ -159,6 +159,7 @@ impl<B: Backend> PartialEq for Matrix<B> {
     }
 }
 
+// todo: move these tests to a separate file
 #[cfg(test)]
 mod test {
     use crate::backends::CPU;
