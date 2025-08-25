@@ -1,4 +1,5 @@
 use crate::backends::Backend;
+use wide::f32x8;
 
 #[derive(Debug)]
 pub struct CPU;
@@ -50,15 +51,19 @@ impl Backend for CPU {
             let row_a = &a[i * k..(i + 1) * k];
             let c_row_start = i * n;
             for j in 0..n {
-                let mut sum = 0.0;
+                let mut acc = f32x8::ZERO;
                 for t in (0..k).step_by(TILE_SIZE) {
                     let end = (t + TILE_SIZE).min(k);
-                    let a_tile = &row_a[t..end];
-                    let bt_tile = &bt[j * k + t..j * k + end];
-                    sum += a_tile.iter().zip(bt_tile).map(|(a, b)| a * b).sum::<f32>();
+                    let a_tile = f32x8::from(&row_a[t..end]);
+                    let bt_tile = f32x8::from(&bt[j * k + t..j * k + end]);
+                    acc = a_tile.mul_add(bt_tile, acc)
                 }
+
+                let sum = acc.to_array().iter().sum();
                 c[c_row_start + j] = sum;
             }
+
+
         }
 
         Ok(())
