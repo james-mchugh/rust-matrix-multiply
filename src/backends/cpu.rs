@@ -44,12 +44,19 @@ impl Backend for CPU {
             }
         }
 
+        const TILE_SIZE: usize = 8;
+
         for i in 0..m {
             let row_a = &a[i * k..(i + 1) * k];
             let c_row_start = i * n;
             for j in 0..n {
-                let row_bt = &bt[j * k..(j + 1) * k];
-                let sum = row_a.iter().zip(row_bt).map(|(a, b)| a * b).sum();
+                let mut sum = 0.0;
+                for t in (0..k).step_by(TILE_SIZE) {
+                    let end = (t + TILE_SIZE).min(k);
+                    let a_tile = &row_a[t..end];
+                    let bt_tile = &bt[j * k + t..j * k + end];
+                    sum += a_tile.iter().zip(bt_tile).map(|(a, b)| a * b).sum::<f32>();
+                }
                 c[c_row_start + j] = sum;
             }
         }

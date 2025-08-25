@@ -6,6 +6,15 @@ edition = "2024"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
+[dependencies]
+wide = { version = "0.7.33" }
+
+
+[profile.release-debug]
+inherits = "release"
+debug = true
+
+
 [[bench]]
 name = "bench_matrix_mul_cpu"
 harness = false
