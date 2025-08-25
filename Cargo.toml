@@ -16,5 +16,5 @@ debug = true
 
 
 [[bench]]
-name = "bench_matrix_mul_cpu"
+name = "bench_dot"
 harness = false

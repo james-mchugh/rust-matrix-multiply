@@ -3,4 +3,4 @@ mod backends;
 
 pub use matrix::Matrix;
 pub use matrix::Dot;
-pub use backends::CPU;
+pub use backends::{CPU, CPUNaive};
