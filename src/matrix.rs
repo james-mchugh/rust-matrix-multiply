@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use crate::backends::Backend;
+use crate::{CPUNaive, CPU};
 
 #[derive(Debug)]
 pub struct Matrix<B: Backend> {
@@ -12,15 +13,15 @@ pub struct Matrix<B: Backend> {
     _b: std::marker::PhantomData<B>,
 }
 
-pub trait Dot {
+pub trait Dot<T> {
     type Err;
     type Output;
-    fn dot(&self, other: &Self) -> Result<Self::Output, Self::Err>;
+    fn dot(&self, ctx: T, other: &Self) -> Result<Self::Output, Self::Err>;
 }
 
 impl<B: Backend> Matrix<B> {
-    pub fn new_zeros(rows: usize, cols: usize) -> Result<Self, B::Err> {
-        let buf = B::alloc(rows * cols)?;
+    pub fn new_zeros(ctx: &B::Ctx, rows: usize, cols: usize) -> Result<Self, B::Err> {
+        let buf = B::alloc(ctx, rows * cols)?;
         Ok(Self {
             buf,
             rows,
@@ -29,9 +30,9 @@ impl<B: Backend> Matrix<B> {
         })
     }
 
-    pub fn from_host(rows: usize, cols: usize, data: &[f32]) -> Result<Self, B::Err> {
+    pub fn from_host(ctx: &B::Ctx, rows: usize, cols: usize, data: &[f32]) -> Result<Self, B::Err> {
         assert_eq!(data.len(), rows * cols);
-        let buf = B::upload(data)?;
+        let buf = B::upload(ctx, data)?;
         Ok(Self {
             buf,
             rows,
@@ -40,9 +41,9 @@ impl<B: Backend> Matrix<B> {
         })
     }
 
-    pub fn to_host(&self) -> Result<Vec<f32>, B::Err> {
+    pub fn to_host(&self, ctx: &B::Ctx) -> Result<Vec<f32>, B::Err> {
         let mut out = vec![0.0f32; self.rows * self.cols];
-        B::download(&self.buf, &mut out)?;
+        B::download(ctx, &self.buf, &mut out)?;
         Ok(out)
     }
 
@@ -51,7 +52,7 @@ impl<B: Backend> Matrix<B> {
     }
 }
 
-impl<B: Backend> TryFrom<Vec<Vec<f32>>> for Matrix<B> {
+impl TryFrom<Vec<Vec<f32>>> for Matrix<CPU> {
     type Error = String;
 
     fn try_from(value: Vec<Vec<f32>>) -> Result<Self, Self::Error> {
@@ -71,20 +72,21 @@ impl<B: Backend> TryFrom<Vec<Vec<f32>>> for Matrix<B> {
         let data: Vec<f32> = value.into_iter().flatten().collect();
 
         // todo fix error message
-        Matrix::from_host(rows, cols, &data).map_err(|_| "Matrix allocation failed".to_string())
+        Matrix::from_host(&(), rows, cols, &data)
+            .map_err(|_| "Matrix allocation failed".to_string())
     }
 }
 
-impl<B: Backend, const R: usize, const C: usize> TryFrom<[[f32; C]; R]> for Matrix<B> {
-    type Error = B::Err;
+impl<const R: usize, const C: usize> TryFrom<[[f32; C]; R]> for Matrix<CPU> {
+    type Error = String;
 
     fn try_from(value: [[f32; C]; R]) -> Result<Self, Self::Error> {
         let flat_data: Vec<f32> = value.iter().flatten().copied().collect();
-        Matrix::from_host(R, C, &flat_data)
+        Matrix::from_host(&(), R, C, &flat_data)
     }
 }
 
-impl<B: Backend> FromStr for Matrix<B> {
+impl FromStr for Matrix<CPU> {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -105,9 +107,9 @@ impl<B: Backend> FromStr for Matrix<B> {
     }
 }
 
-impl<B: Backend> Display for Matrix<B> {
+impl Display for Matrix<CPU> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let data = self.to_host().map_err(|_| std::fmt::Error)?;
+        let data = self.to_host(&()).map_err(|_| std::fmt::Error)?;
         for row in 0..self.rows {
             let start = row * self.cols;
             let end = start + self.cols;
@@ -123,29 +125,35 @@ impl<B: Backend> Display for Matrix<B> {
 }
 
 // General inherent methods that don't need "numeric" bounds
-impl<B: Backend> Matrix<B> {
-    pub fn new(rows: usize, cols: usize) -> Result<Self, B::Err> {
-        Matrix::new_zeros(rows, cols)
+impl Matrix<CPU> {
+    pub fn new(rows: usize, cols: usize) -> Result<Self, String> {
+        Matrix::new_zeros(&(), rows, cols)
+    }
+}
+
+impl Matrix<CPUNaive> {
+    pub fn new(rows: usize, cols: usize) -> Result<Self, String> {
+        Matrix::new_zeros(&(), rows, cols)
     }
 }
 
 // Numeric operations grouped in a separate impl with focused bounds
-impl<B: Backend> Dot for Matrix<B> {
+impl<B: Backend> Dot<&B::Ctx> for Matrix<B> {
     type Err = String;
     type Output = Self;
 
-    fn dot(&self, other: &Self) -> Result<Self, Self::Err> {
+    fn dot(&self, ctx: &B::Ctx, other: &Self) -> Result<Self::Output, Self::Err> {
         if self.cols != other.rows {
             return Err("Matrix dimensions do not match".to_string());
         }
 
         // todo: fix error message
         let mut c =
-            Self::new_zeros(self.cols, self.rows).map_err(|_| "Matrix allocation failed")?;
+            Self::new_zeros(ctx, self.cols, self.rows).map_err(|_| "Matrix allocation failed")?;
 
         // todo: fix error message
         B::gemm(
-            self.rows, self.cols, other.cols, &self.buf, &other.buf, &mut c.buf,
+            ctx, self.rows, self.cols, other.cols, &self.buf, &other.buf, &mut c.buf,
         )
         .map_err(|_| "Matrix multiplication failed")?;
 
@@ -153,10 +161,14 @@ impl<B: Backend> Dot for Matrix<B> {
     }
 }
 
-impl<B: Backend> PartialEq for Matrix<B> {
+impl PartialEq for Matrix<CPU> {
     fn eq(&self, other: &Self) -> bool {
-        self.to_host().unwrap() == other.to_host().unwrap()
+        self.to_host(&()).unwrap() == other.to_host(&()).unwrap()
     }
+}
+
+impl Matrix<CPU> {
+    pub fn to_device(&self) {}
 }
 
 // todo: move these tests to a separate file
@@ -192,7 +204,7 @@ mod test {
             ]
         ).unwrap();
 
-        let result = matrix_a.dot(&matrix_b).unwrap();
+        let result = matrix_a.dot(&(), &matrix_b).unwrap();
 
         assert_eq!(result, expected)
     }

@@ -13,7 +13,7 @@ fn main() -> Result<(), String> {
     let matrix_b = read_to_string(path_b)
         .map_err(|e| e.to_string())?
         .parse::<Matrix<CPU>>()?;
-    let result = matrix_a.dot(&matrix_b)?;
+    let result = matrix_a.dot(&(), &matrix_b)?;
 
     println!("{}", result);
 

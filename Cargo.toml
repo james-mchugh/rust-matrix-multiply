@@ -8,6 +8,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [dependencies]
 wide = { version = "0.7.33" }
+cust = { version = "0.3.2" }
 
 
 [profile.release-debug]

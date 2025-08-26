@@ -9,20 +9,21 @@ impl Backend for CPUNaive {
     type Ctx = ();
     type Err = String;
 
-    fn alloc(size: usize) -> Result<Self::Buf, Self::Err> {
+    fn alloc(_ctx: &Self::Ctx, size: usize) -> Result<Self::Buf, Self::Err> {
         Ok(vec![0.0; size])
     }
 
-    fn upload(host: &[f32]) -> Result<Self::Buf, Self::Err> {
+    fn upload(_ctx: &Self::Ctx, host: &[f32]) -> Result<Self::Buf, Self::Err> {
         Ok(host.to_vec())
     }
 
-    fn download(device: &Self::Buf, host: &mut [f32]) -> Result<(), Self::Err> {
+    fn download(_ctx: &Self::Ctx, device: &Self::Buf, host: &mut [f32]) -> Result<(), Self::Err> {
         host.copy_from_slice(device);
         Ok(())
     }
 
     fn gemm(
+        _ctx: &Self::Ctx,
         m: usize,
         k: usize,
         n: usize,
